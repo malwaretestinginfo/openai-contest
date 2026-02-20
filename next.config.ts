@@ -1,11 +1,8 @@
 import type { NextConfig } from "next";
 
-const nextConfig: NextConfig & { target?: "serverless" } = {
-  typedRoutes: true
+const nextConfig: NextConfig = {
+  typedRoutes: true,
+  output: "standalone"
 };
-
-if (process.env.NOW_BUILDER === "1") {
-  nextConfig.target = "serverless";
-}
 
 export default nextConfig;
