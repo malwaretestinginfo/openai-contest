@@ -18,6 +18,7 @@
     "next": "*",
     "react": "*",
     "react-dom": "*",
+    "reactflow": "*",
     "y-monaco": "*",
     "y-protocols": "*",
     "yjs": "*"
