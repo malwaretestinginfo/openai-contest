@@ -1,0 +1,37 @@
+{
+  "name": "pair-programming-tool",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@liveblocks/client": "*",
+    "@liveblocks/node": "*",
+    "@liveblocks/react": "*",
+    "@liveblocks/yjs": "*",
+    "@monaco-editor/react": "*",
+    "monaco-editor": "*",
+    "next": "*",
+    "react": "*",
+    "react-dom": "*",
+    "y-monaco": "*",
+    "y-protocols": "*",
+    "yjs": "*"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "*",
+    "@types/node": "*",
+    "@types/react": "*",
+    "@types/react-dom": "*",
+    "autoprefixer": "*",
+    "eslint": "*",
+    "eslint-config-next": "*",
+    "postcss": "*",
+    "tailwindcss": "*",
+    "typescript": "*"
+  }
+}

@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: #0b0f14;
+  color: #e6edf3;
+  font-family: "JetBrains Mono", Consolas, "Courier New", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.monaco-editor,
+.monaco-editor .overflow-guard {
+  z-index: 1;
+}
+
+.monaco-editor .overlayWidgets,
+.monaco-editor .overflowingContentWidgets {
+  z-index: 20 !important;
+}
+
+/* Hide Liveblocks attribution badge if rendered */
+#liveblocks-badge,
+#liveblocks-badge-hide-button,
+div#liveblocks-badge,
+button#liveblocks-badge-hide-button {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+[data-liveblocks-powered-by],
+[data-liveblocks-attribution],
+[class*="lb-powered"],
+[class*="liveblocks-powered"],
+[class*="liveblocks-badge"],
+[id*="liveblocks-powered"],
+[id*="liveblocks-badge"],
+a[href*="liveblocks.io"][aria-label*="Powered"],
+a[href*="liveblocks.io"][title*="Powered"],
+a[href*="liveblocks.io"][title*="Liveblocks"],
+a[href*="liveblocks.io"] {
+  opacity: 0 !important;
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transform: translateY(200px) !important;
+  z-index: -1 !important;
+}
+
