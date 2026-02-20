@@ -78,16 +78,26 @@ export default function WhiteboardCanvas({ className, onStrokeCommitted }: White
   const [redoStack, setRedoStack] = useState<WhiteboardStroke[]>([]);
 
   const pushStroke = useMutation(({ storage }, stroke: WhiteboardStroke) => {
-    const current = storage.get("strokes") ?? [];
-    storage.set("strokes", [...current, stroke]);
+    const current = storage.get("strokes");
+    if (current) {
+      current.push(stroke);
+    }
   }, []);
 
   const setAllStrokes = useMutation(({ storage }, next: WhiteboardStroke[]) => {
-    storage.set("strokes", next);
+    const current = storage.get("strokes");
+    if (current) {
+      current.clear();
+      for (const stroke of next) {
+        current.push(stroke);
+      }
+    } else {
+      storage.set("strokes", next);
+    }
   }, []);
 
   const clearStrokes = useMutation(({ storage }) => {
-    storage.set("strokes", []);
+    storage.get("strokes")?.clear();
   }, []);
 
   const exportPng = useCallback(() => {

@@ -326,8 +326,13 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
   const sessionEvents = useStorage((root) => root.sessionEvents ?? []);
   const strokes = useStorage((root) => root.strokes ?? []);
   const appendSessionEvent = useMutation(({ storage }, entry: SessionEvent) => {
-    const current = storage.get("sessionEvents") ?? [];
-    storage.set("sessionEvents", [...current, entry].slice(-400));
+    const current = storage.get("sessionEvents");
+    if (current) {
+      current.push(entry);
+      if (current.length > 400) {
+        current.delete(0);
+      }
+    }
   }, []);
 
   const runTool = useCallback(async (tool: string, args: Record<string, unknown>) => {
@@ -402,37 +407,40 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
   const canAddTask = taskInput.trim().length > 0;
 
   const addTask = useMutation(({ storage }, payload: { title: string; assignee: string; createdBy: string }) => {
-    const current = storage.get("tasks") ?? [];
-    const next: TaskItem = {
-      id: crypto.randomUUID(),
-      title: payload.title,
-      status: "todo",
-      assignee: payload.assignee,
-      createdBy: payload.createdBy,
-      createdAt: Date.now()
-    };
-    storage.set("tasks", [...current, next]);
+    const current = storage.get("tasks");
+    if (current) {
+      current.push({
+        id: crypto.randomUUID(),
+        title: payload.title,
+        status: "todo",
+        assignee: payload.assignee,
+        createdBy: payload.createdBy,
+        createdAt: Date.now()
+      });
+    }
   }, []);
 
   const cycleTaskStatus = useMutation(({ storage }, taskId: string) => {
-    const current = storage.get("tasks") ?? [];
-    const next = current.map((task) => {
-      if (task.id !== taskId) {
-        return task;
+    const current = storage.get("tasks");
+    if (current) {
+      const index = [...current].findIndex((task) => task.id === taskId);
+      if (index !== -1) {
+        const task = current.get(index);
+        const nextStatus: TaskItem["status"] =
+          task.status === "todo" ? "in_progress" : task.status === "in_progress" ? "done" : "todo";
+        current.set(index, { ...task, status: nextStatus });
       }
-      const status: TaskItem["status"] =
-        task.status === "todo" ? "in_progress" : task.status === "in_progress" ? "done" : "todo";
-      return { ...task, status };
-    });
-    storage.set("tasks", next);
+    }
   }, []);
 
   const deleteTask = useMutation(({ storage }, taskId: string) => {
-    const current = storage.get("tasks") ?? [];
-    storage.set(
-      "tasks",
-      current.filter((task) => task.id !== taskId)
-    );
+    const current = storage.get("tasks");
+    if (current) {
+      const index = [...current].findIndex((task) => task.id === taskId);
+      if (index !== -1) {
+        current.delete(index);
+      }
+    }
   }, []);
 
   const updateSessionNote = useMutation(({ storage }, value: string) => {
@@ -440,8 +448,13 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
   }, []);
 
   const appendRunHistory = useMutation(({ storage }, entry: RunHistoryEntry) => {
-    const current = storage.get("runHistory") ?? [];
-    storage.set("runHistory", [...current, entry].slice(-120));
+    const current = storage.get("runHistory");
+    if (current) {
+      current.push(entry);
+      if (current.length > 100) {
+        current.delete(0);
+      }
+    }
   }, []);
 
   const copyInviteLink = useCallback(async () => {
