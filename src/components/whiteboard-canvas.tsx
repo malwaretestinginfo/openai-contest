@@ -1,6 +1,7 @@
 "use client";
 
 import { PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LiveList } from "@liveblocks/client";
 import { useMutation, useMyPresence, useOthers, useStorage } from "@liveblocks/react/suspense";
 import type { WhiteboardElementType, WhiteboardPoint, WhiteboardStroke } from "@/liveblocks.config";
 
@@ -92,7 +93,7 @@ export default function WhiteboardCanvas({ className, onStrokeCommitted }: White
         current.push(stroke);
       }
     } else {
-      storage.set("strokes", next);
+      storage.set("strokes", new LiveList(next));
     }
   }, []);
 
