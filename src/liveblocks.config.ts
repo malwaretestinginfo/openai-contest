@@ -1,3 +1,5 @@
+import { LiveList } from "@liveblocks/client";
+
 export type Presence = {
   cursor: { x: number; y: number } | null;
   cursorContext: "whiteboard" | "editor" | null;
@@ -52,11 +54,11 @@ export type SessionEvent = {
 };
 
 export type Storage = {
-  strokes: WhiteboardStroke[];
-  tasks: TaskItem[];
+  strokes: LiveList<WhiteboardStroke>;
+  tasks: LiveList<TaskItem>;
   sessionNote: string;
-  runHistory: RunHistoryEntry[];
-  sessionEvents: SessionEvent[];
+  runHistory: LiveList<RunHistoryEntry>;
+  sessionEvents: LiveList<SessionEvent>;
 };
 
 export type UserMeta = {

@@ -2,6 +2,7 @@
 
 import { ClientSideSuspense, LiveblocksProvider, RoomProvider } from "@liveblocks/react/suspense";
 import { LiveList } from "@liveblocks/client";
+import type { RunHistoryEntry, SessionEvent, TaskItem, WhiteboardStroke } from "@/liveblocks.config";
 import WorkspaceShell from "@/components/workspace-shell";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { ensureSecurityCookies, getSecurityHeaders } from "@/lib/client-security";
@@ -233,11 +234,11 @@ export default function RoomView({ roomId }: RoomViewProps) {
           selectedTool: "pen"
         }}
         initialStorage={{
-          strokes: new LiveList([]),
-          tasks: new LiveList([]),
+          strokes: new LiveList<WhiteboardStroke>([]),
+          tasks: new LiveList<TaskItem>([]),
           sessionNote: "",
-          runHistory: new LiveList([]),
-          sessionEvents: new LiveList([])
+          runHistory: new LiveList<RunHistoryEntry>([]),
+          sessionEvents: new LiveList<SessionEvent>([])
         }}
       >
         <ClientSideSuspense

@@ -426,9 +426,11 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
       const index = [...current].findIndex((task) => task.id === taskId);
       if (index !== -1) {
         const task = current.get(index);
-        const nextStatus: TaskItem["status"] =
-          task.status === "todo" ? "in_progress" : task.status === "in_progress" ? "done" : "todo";
-        current.set(index, { ...task, status: nextStatus });
+        if (task) {
+          const nextStatus: TaskItem["status"] =
+            task.status === "todo" ? "in_progress" : task.status === "in_progress" ? "done" : "todo";
+          current.set(index, { ...task, status: nextStatus });
+        }
       }
     }
   }, []);
