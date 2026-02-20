@@ -161,7 +161,7 @@ export default function AiAssistantPanel({ runTool }: AiAssistantPanelProps) {
   return (
     <div className="flex h-full flex-col rounded-2xl border border-white/10 bg-[#0a0918]/75 backdrop-blur-2xl">
       <div className="border-b border-white/10 px-4 py-3 text-sm font-semibold text-[#f1ecff]">
-        AI Assistant (Groq Llama 4 Scout)
+        AI Assistant (gpt-oss-120b)
       </div>
       <div className="flex-1 space-y-2 overflow-y-auto p-3 text-sm">
         {messages.length === 0 ? (

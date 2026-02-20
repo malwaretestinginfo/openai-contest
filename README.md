@@ -63,16 +63,14 @@ Then open:
 
 ## Demo / screenshots
 
-Screenshots and short demo clips are encouraged for review.
+Current screenshots from this repo:
 
-Suggested captures:
-
-- landing page
-- room creation/join flow
-- realtime code sync between 2 browser windows
-- shared whiteboard sync
-- AI assistant tool call flow
-- task board / notes / run history in control center
+![Landing / Hero](screenshots/Screenshot%202026-02-20%20155617.png)
+![Room Join / Access](screenshots/Screenshot%202026-02-20%20155627.png)
+![Workspace View 1](screenshots/Screenshot%202026-02-20%20155634.png)
+![Workspace View 2](screenshots/Screenshot%202026-02-20%20155732.png)
+![Control Center / Tools](screenshots/Screenshot%202026-02-20%20155850.png)
+![AI + Collaboration](screenshots/Screenshot%202026-02-20%20161205.png)
 
 ## Security note
 

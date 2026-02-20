@@ -238,6 +238,34 @@ function monacoLanguageFor(language: EditorLanguage): string {
   }
 }
 
+function normalizeToolText(input: string) {
+  let value = input.trim();
+
+  // Try to decode double-encoded JSON string payloads.
+  for (let i = 0; i < 2; i += 1) {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (typeof parsed === "string") {
+        value = parsed;
+        continue;
+      }
+    } catch {
+      break;
+    }
+    break;
+  }
+
+  // Fallback for raw escaped sequences like "\\n" delivered as plain text.
+  if (!value.includes("\n") && /\\n|\\r|\\t/.test(value)) {
+    value = value
+      .replace(/\\r/g, "\r")
+      .replace(/\\n/g, "\n")
+      .replace(/\\t/g, "\t");
+  }
+
+  return value;
+}
+
 export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps) {
   const editorBridgeRef = useRef<EditorBridge | null>(null);
   const seenConnectionIdsRef = useRef<Set<number>>(new Set());
@@ -283,7 +311,7 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
     }
 
     if (tool === "editor.setText") {
-      const text = typeof args.text === "string" ? args.text : "";
+      const text = typeof args.text === "string" ? normalizeToolText(args.text) : "";
       bridge.setText(text);
       return "Editor text updated.";
     }
