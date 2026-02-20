@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Room access denied" }, { status: 401 });
   }
 
-  const userId = "user-" + access.token.slice(0, 12);
+  const userId = "user-" + access.ticketId;
   const name = access.displayName;
   const color = access.color;
 

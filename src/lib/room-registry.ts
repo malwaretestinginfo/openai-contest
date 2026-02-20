@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
 
 export type RoomSummary = {
   roomId: string;
@@ -16,6 +16,7 @@ type RoomRecord = {
 
 type AccessTicket = {
   token: string;
+  ticketId: string;
   roomId: string;
   displayName: string;
   color: string;
@@ -23,17 +24,17 @@ type AccessTicket = {
 };
 
 const rooms = new Map<string, RoomRecord>();
-const tickets = new Map<string, AccessTicket>();
 const TICKET_TTL_MS = 1000 * 60 * 60 * 24 * 7;
+const TICKET_VERSION = 1;
 
-function cleanExpiredTickets() {
-  const now = Date.now();
-  for (const [token, ticket] of tickets.entries()) {
-    if (ticket.expiresAt <= now) {
-      tickets.delete(token);
-    }
-  }
-}
+type AccessTicketPayload = {
+  v: number;
+  jti: string;
+  roomId: string;
+  displayName: string;
+  color: string;
+  exp: number;
+};
 
 function hashPassword(password: string) {
   return createHash("sha256").update(password).digest("hex");
@@ -43,6 +44,87 @@ function randomColor() {
   return `#${Math.floor(Math.random() * 0xffffff)
     .toString(16)
     .padStart(6, "0")}`;
+}
+
+function toBase64Url(value: string) {
+  return Buffer.from(value, "utf8").toString("base64url");
+}
+
+function fromBase64Url(value: string) {
+  return Buffer.from(value, "base64url").toString("utf8");
+}
+
+function getTicketSecret() {
+  return process.env.ROOM_TICKET_SECRET || process.env.LIVEBLOCKS_SECRET_KEY || "";
+}
+
+function signTicketPayload(payloadBase64: string, secret: string) {
+  return createHmac("sha256", secret).update(payloadBase64).digest("base64url");
+}
+
+function createAccessToken(payload: AccessTicketPayload) {
+  const secret = getTicketSecret();
+  if (!secret) {
+    return null;
+  }
+
+  const payloadBase64 = toBase64Url(JSON.stringify(payload));
+  const signature = signTicketPayload(payloadBase64, secret);
+  return `${payloadBase64}.${signature}`;
+}
+
+function parseAccessToken(token: string | undefined): AccessTicketPayload | null {
+  if (!token) {
+    return null;
+  }
+
+  const [payloadBase64, signature] = token.split(".");
+  if (!payloadBase64 || !signature) {
+    return null;
+  }
+
+  const secret = getTicketSecret();
+  if (!secret) {
+    return null;
+  }
+
+  const expectedSignature = signTicketPayload(payloadBase64, secret);
+  const signatureBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expectedSignature);
+
+  if (signatureBuffer.length !== expectedBuffer.length) {
+    return null;
+  }
+
+  if (!timingSafeEqual(signatureBuffer, expectedBuffer)) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(fromBase64Url(payloadBase64)) as AccessTicketPayload;
+    if (parsed.v !== TICKET_VERSION) {
+      return null;
+    }
+    if (typeof parsed.jti !== "string" || !parsed.jti) {
+      return null;
+    }
+    if (typeof parsed.roomId !== "string" || !parsed.roomId) {
+      return null;
+    }
+    if (typeof parsed.displayName !== "string" || !parsed.displayName) {
+      return null;
+    }
+    if (typeof parsed.color !== "string" || !parsed.color) {
+      return null;
+    }
+    if (typeof parsed.exp !== "number" || !Number.isFinite(parsed.exp)) {
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
 }
 
 export function normalizeRoomId(input: string) {
@@ -98,7 +180,6 @@ export function getRoomSummary(roomIdInput: string): RoomSummary | null {
 }
 
 export function joinRoom(params: { roomId: string; displayName: string; password?: string }) {
-  cleanExpiredTickets();
   const roomId = normalizeRoomId(params.roomId);
   const room = rooms.get(roomId);
 
@@ -116,15 +197,30 @@ export function joinRoom(params: { roomId: string; displayName: string; password
     return { ok: false as const, error: "Display name is required." };
   }
 
-  const token = randomBytes(24).toString("hex");
-  const ticket: AccessTicket = {
-    token,
+  const ticketId = randomBytes(16).toString("hex");
+  const expiresAt = Date.now() + TICKET_TTL_MS;
+  const color = randomColor();
+  const payload: AccessTicketPayload = {
+    v: TICKET_VERSION,
+    jti: ticketId,
     roomId,
     displayName,
-    color: randomColor(),
-    expiresAt: Date.now() + TICKET_TTL_MS
+    color,
+    exp: expiresAt
   };
-  tickets.set(token, ticket);
+  const token = createAccessToken(payload);
+  if (!token) {
+    return { ok: false as const, error: "Room ticket secret is missing." };
+  }
+
+  const ticket: AccessTicket = {
+    token,
+    ticketId,
+    roomId,
+    displayName,
+    color,
+    expiresAt
+  };
 
   return {
     ok: true as const,
@@ -137,23 +233,24 @@ export function joinRoom(params: { roomId: string; displayName: string; password
 }
 
 export function validateRoomAccess(token: string | undefined, roomIdInput: string) {
-  cleanExpiredTickets();
-  if (!token) {
-    return null;
-  }
-
   const roomId = normalizeRoomId(roomIdInput);
-  const ticket = tickets.get(token);
-  if (!ticket) {
+  const payload = parseAccessToken(token);
+  if (!payload) {
     return null;
   }
-  if (ticket.roomId !== roomId) {
+  if (payload.roomId !== roomId) {
     return null;
   }
-  if (ticket.expiresAt <= Date.now()) {
-    tickets.delete(token);
+  if (payload.exp <= Date.now()) {
     return null;
   }
-  return ticket;
-}
 
+  return {
+    token: token as string,
+    ticketId: payload.jti,
+    roomId: payload.roomId,
+    displayName: payload.displayName,
+    color: payload.color,
+    expiresAt: payload.exp
+  };
+}
