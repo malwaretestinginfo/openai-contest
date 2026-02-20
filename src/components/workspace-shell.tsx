@@ -4,7 +4,7 @@ import AiAssistantPanel from "@/components/ai-assistant-panel";
 import MonacoEditorPanel from "@/components/monaco-editor-panel";
 import WhiteboardCanvas from "@/components/whiteboard-canvas";
 import { getSecurityHeaders } from "@/lib/client-security";
-import { useBroadcastEvent, useEventListener, useMutation, useOthers, useSelf, useStorage } from "@liveblocks/react/suspense";
+import { useBroadcastEvent, useEventListener, useMutation, useMyPresence, useOthers, useSelf, useStorage } from "@liveblocks/react/suspense";
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -117,6 +117,24 @@ type RunHistoryEntry = {
   exitCode: number;
   createdAt: number;
   preview: string;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+};
+
+type SessionEvent = {
+  id: string;
+  type: "join" | "chat" | "run" | "task" | "whiteboard" | "ai";
+  actor: string;
+  text: string;
+  createdAt: number;
+};
+
+type VoiceClip = {
+  id: string;
+  createdAt: number;
+  url: string;
+  durationMs: number;
 };
 
 function icon(path: string) {
@@ -270,6 +288,7 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
   const editorBridgeRef = useRef<EditorBridge | null>(null);
   const seenConnectionIdsRef = useRef<Set<number>>(new Set());
   const hasInitializedParticipantsRef = useRef(false);
+  const previousStrokeCountRef = useRef(0);
   const [activeTab, setActiveTab] = useState<MainTab>("whiteboard");
   const [utilityTab, setUtilityTab] = useState<UtilityTab>("runner");
   const [splitView, setSplitView] = useState(false);
@@ -288,13 +307,28 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
   const [taskInput, setTaskInput] = useState("");
   const [assigneeInput, setAssigneeInput] = useState("");
   const [noteDraft, setNoteDraft] = useState("");
+  const [gistToken, setGistToken] = useState("");
+  const [gistStatus, setGistStatus] = useState("");
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [voiceClips, setVoiceClips] = useState<VoiceClip[]>([]);
+  const [replayUrl, setReplayUrl] = useState("");
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaChunksRef = useRef<Blob[]>([]);
+  const recordStartedAtRef = useRef<number>(0);
   const others = useOthers();
   const me = useSelf();
+  const [myPresence, setMyPresence] = useMyPresence();
   const broadcastEvent = useBroadcastEvent();
   const snapshotStorageKey = `pair-room-${roomId}-snapshots`;
   const tasks = useStorage((root) => root.tasks ?? []);
   const sessionNote = useStorage((root) => root.sessionNote ?? "");
   const runHistory = useStorage((root) => root.runHistory ?? []);
+  const sessionEvents = useStorage((root) => root.sessionEvents ?? []);
+  const strokes = useStorage((root) => root.strokes ?? []);
+  const appendSessionEvent = useMutation(({ storage }, entry: SessionEvent) => {
+    const current = storage.get("sessionEvents") ?? [];
+    storage.set("sessionEvents", [...current, entry].slice(-400));
+  }, []);
 
   const runTool = useCallback(async (tool: string, args: Record<string, unknown>) => {
     if (tool === "tools.list") {
@@ -313,6 +347,13 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
     if (tool === "editor.setText") {
       const text = typeof args.text === "string" ? normalizeToolText(args.text) : "";
       bridge.setText(text);
+      appendSessionEvent({
+        id: crypto.randomUUID(),
+        type: "ai",
+        actor: me?.info?.name ?? "AI",
+        text: "AI updated editor content.",
+        createdAt: Date.now()
+      });
       return "Editor text updated.";
     }
 
@@ -322,11 +363,18 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
       const detail = typeof args.detail === "string" ? args.detail : "";
       const insertText = typeof args.insertText === "string" ? args.insertText : label;
       bridge.addIntellisense(label, kind, detail, insertText);
+      appendSessionEvent({
+        id: crypto.randomUUID(),
+        type: "ai",
+        actor: me?.info?.name ?? "AI",
+        text: `AI added intellisense: ${label}`,
+        createdAt: Date.now()
+      });
       return `Intellisense entry added: ${label}`;
     }
 
     return `Unknown tool: ${tool}`;
-  }, []);
+  }, [appendSessionEvent, me?.info?.name]);
 
   const onlineCount = useMemo(() => others.length + (me ? 1 : 0), [me, others.length]);
   const participantRows = useMemo(() => {
@@ -336,7 +384,8 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
             id: `self-${me.connectionId}`,
             name: me.info?.name ?? "You",
             color: me.info?.color ?? "#8f6bff",
-            isYou: true
+            isYou: true,
+            presence: me.presence
           }
         ]
       : [];
@@ -344,7 +393,8 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
       id: `other-${other.connectionId}`,
       name: other.info?.name ?? `User ${other.connectionId}`,
       color: other.info?.color ?? "#7e57f2",
-      isYou: false
+      isYou: false,
+      presence: other.presence
     }));
     return [...selfRow, ...otherRows];
   }, [me, others]);
@@ -401,6 +451,127 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
     }
     await navigator.clipboard.writeText(url);
   }, []);
+
+  const downloadTextFile = useCallback((filename: string, text: string) => {
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const createReplayLink = useCallback(async () => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const payload = {
+      roomId,
+      roomName: roomName ?? roomId,
+      createdAt: Date.now(),
+      participants: participantRows.map((row) => row.name),
+      tasks,
+      runHistory: runHistory.slice(-50),
+      events: sessionEvents.slice(-120),
+      note: noteDraft
+    };
+    const encoded = encodeURIComponent(btoa(unescape(encodeURIComponent(JSON.stringify(payload)))));
+    const url = `${window.location.origin}/replay?data=${encoded}`;
+    setReplayUrl(url);
+    await navigator.clipboard.writeText(url);
+  }, [noteDraft, participantRows, roomId, roomName, runHistory, sessionEvents, tasks]);
+
+  const exportCurrentCodeToGist = useCallback(async () => {
+    const token = gistToken.trim();
+    const bridge = editorBridgeRef.current;
+    if (!bridge || !token) {
+      setGistStatus("Missing editor content or GitHub token.");
+      return;
+    }
+    try {
+      setGistStatus("Creating gist...");
+      const response = await fetch("https://api.github.com/gists", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          description: `Pair Studio export (${editorLanguage})`,
+          public: false,
+          files: {
+            [`pair-studio.${editorLanguage}`]: {
+              content: bridge.getText()
+            }
+          }
+        })
+      });
+      const data = (await response.json()) as { html_url?: string; message?: string };
+      if (!response.ok || !data.html_url) {
+        setGistStatus(data.message ? `Gist failed: ${data.message}` : "Gist failed.");
+        return;
+      }
+      setGistStatus(`Gist created: ${data.html_url}`);
+      appendSessionEvent({
+        id: crypto.randomUUID(),
+        type: "ai",
+        actor: me?.info?.name ?? "Unknown",
+        text: "Exported code to GitHub Gist",
+        createdAt: Date.now()
+      });
+    } catch (error) {
+      setGistStatus(error instanceof Error ? error.message : "Gist failed.");
+    }
+  }, [appendSessionEvent, editorLanguage, gistToken, me?.info?.name]);
+
+  const toggleVoiceRecording = useCallback(async () => {
+    if (isRecordingVoice) {
+      mediaRecorderRef.current?.stop();
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setGistStatus("Voice notes are not supported in this browser.");
+      return;
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const recorder = new MediaRecorder(stream);
+    mediaChunksRef.current = [];
+    recordStartedAtRef.current = Date.now();
+
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        mediaChunksRef.current.push(event.data);
+      }
+    };
+
+    recorder.onstop = () => {
+      const blob = new Blob(mediaChunksRef.current, { type: "audio/webm" });
+      const url = URL.createObjectURL(blob);
+      const clip: VoiceClip = {
+        id: crypto.randomUUID(),
+        createdAt: Date.now(),
+        url,
+        durationMs: Date.now() - recordStartedAtRef.current
+      };
+      setVoiceClips((prev) => [clip, ...prev].slice(0, 12));
+      setIsRecordingVoice(false);
+      stream.getTracks().forEach((track) => track.stop());
+      appendSessionEvent({
+        id: crypto.randomUUID(),
+        type: "ai",
+        actor: me?.info?.name ?? "Unknown",
+        text: "Recorded a voice clip",
+        createdAt: Date.now()
+      });
+    };
+
+    mediaRecorderRef.current = recorder;
+    recorder.start();
+    setIsRecordingVoice(true);
+  }, [appendSessionEvent, isRecordingVoice, me?.info?.name]);
 
   const showWhiteboard = splitView || activeTab === "whiteboard";
   const showCode = splitView || activeTab === "code";
@@ -466,7 +637,17 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
         ok: data.ok,
         exitCode: data.exitCode,
         createdAt: Date.now(),
-        preview: (data.stdout || data.stderr || data.error || "").slice(0, 180) || "(No output)"
+        preview: (data.stdout || data.stderr || data.error || "").slice(0, 180) || "(No output)",
+        stdout: data.stdout ?? "",
+        stderr: data.stderr ?? "",
+        timedOut: data.timedOut ?? false
+      });
+      appendSessionEvent({
+        id: crypto.randomUUID(),
+        type: "run",
+        actor: me?.info?.name ?? "Unknown",
+        text: `${editorLanguage} run finished with exit ${data.exitCode}`,
+        createdAt: Date.now()
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown runner error.";
@@ -484,12 +665,22 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
         ok: false,
         exitCode: 1,
         createdAt: Date.now(),
-        preview: message.slice(0, 180)
+        preview: message.slice(0, 180),
+        stdout: "",
+        stderr: message,
+        timedOut: false
+      });
+      appendSessionEvent({
+        id: crypto.randomUUID(),
+        type: "run",
+        actor: me?.info?.name ?? "Unknown",
+        text: `${editorLanguage} run failed: ${message.slice(0, 80)}`,
+        createdAt: Date.now()
       });
     } finally {
       setIsRunning(false);
     }
-  }, [appendRunHistory, editorLanguage, me?.info?.name]);
+  }, [appendRunHistory, appendSessionEvent, editorLanguage, me?.info?.name]);
 
   const exportSessionSummary = useCallback(() => {
     const participantText = participantRows.map((p) => `- ${p.name}${p.isYou ? " (you)" : ""}`).join("\n");
@@ -544,8 +735,15 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
       createdAt: message.createdAt
     });
     setChatMessages((prev) => [...prev, message].slice(-100));
+    appendSessionEvent({
+      id: crypto.randomUUID(),
+      type: "chat",
+      actor: message.sender,
+      text: message.text.slice(0, 120),
+      createdAt: message.createdAt
+    });
     setChatInput("");
-  }, [broadcastEvent, chatInput, me?.info?.name]);
+  }, [appendSessionEvent, broadcastEvent, chatInput, me?.info?.name]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -609,6 +807,13 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
           text: `${name} joined the room`
         };
         setJoinNotices((prev) => [notice, ...prev].slice(0, 4));
+        appendSessionEvent({
+          id: crypto.randomUUID(),
+          type: "join",
+          actor: name,
+          text: "Joined the room",
+          createdAt: Date.now()
+        });
         window.setTimeout(() => {
           setJoinNotices((prev) => prev.filter((item) => item.id !== notice.id));
         }, 4500);
@@ -618,13 +823,40 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
     if (!hasInitializedParticipantsRef.current) {
       hasInitializedParticipantsRef.current = true;
     }
-  }, [me, others]);
+  }, [appendSessionEvent, me, others]);
 
   useEffect(() => {
     if (utilityTab === "chat") {
       setUnreadCount(0);
     }
   }, [utilityTab]);
+
+  useEffect(() => {
+    if (!hasInitializedParticipantsRef.current) {
+      previousStrokeCountRef.current = strokes.length;
+      return;
+    }
+    if (strokes.length <= previousStrokeCountRef.current) {
+      previousStrokeCountRef.current = strokes.length;
+      return;
+    }
+    previousStrokeCountRef.current = strokes.length;
+    appendSessionEvent({
+      id: crypto.randomUUID(),
+      type: "whiteboard",
+      actor: me?.info?.name ?? "Unknown",
+      text: "Drew on whiteboard",
+      createdAt: Date.now()
+    });
+  }, [appendSessionEvent, me?.info?.name, strokes.length]);
+
+  useEffect(() => {
+    return () => {
+      for (const clip of voiceClips) {
+        URL.revokeObjectURL(clip.url);
+      }
+    };
+  }, [voiceClips]);
 
   useEffect(() => {
     const hideLiveblocksBadge = () => {
@@ -758,6 +990,16 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
         <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs text-zinc-300" title="Online">
           Online: <span className="font-semibold text-zinc-100">{onlineCount}</span>
         </div>
+        <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs text-zinc-300" title="Presence">
+          You:{" "}
+          <span className="font-semibold text-zinc-100">
+            {myPresence.cursorContext === "editor"
+              ? `editing ${myPresence.editorCursorLine ?? 1}:${myPresence.editorCursorColumn ?? 1}`
+              : myPresence.cursorContext === "whiteboard"
+                ? "drawing"
+                : "idle"}
+          </span>
+        </div>
         <button
           className="ml-auto rounded-xl border border-white bg-white p-2.5 text-black transition"
           onClick={copyInviteLink}
@@ -779,6 +1021,21 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
             <section className="overflow-hidden rounded-2xl border border-white/10 bg-[#0f1012]">
               <MonacoEditorPanel
                 language={monacoLanguageFor(editorLanguage)}
+                onCursorChange={({ lineNumber, column }) => {
+                  setMyPresence({
+                    cursorContext: "editor",
+                    editorCursorLine: lineNumber,
+                    editorCursorColumn: column,
+                    cursor: null
+                  });
+                }}
+                onEditorBlur={() => {
+                  setMyPresence({
+                    cursorContext: null,
+                    editorCursorLine: null,
+                    editorCursorColumn: null
+                  });
+                }}
                 onReady={(api) => {
                   editorBridgeRef.current = {
                     getText: api.getText,
@@ -910,6 +1167,28 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
                   <div className="text-zinc-500">No run output yet.</div>
                 )}
               </div>
+              {runResult ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    className="rounded-xl border border-white/15 bg-black/35 px-2 py-1.5 text-[11px] text-zinc-100 hover:border-white/40"
+                    onClick={() =>
+                      downloadTextFile(`run-${editorLanguage}-stdout.txt`, runResult.stdout || "(empty)")
+                    }
+                    type="button"
+                  >
+                    Export stdout
+                  </button>
+                  <button
+                    className="rounded-xl border border-white/15 bg-black/35 px-2 py-1.5 text-[11px] text-zinc-100 hover:border-white/40"
+                    onClick={() =>
+                      downloadTextFile(`run-${editorLanguage}-stderr.txt`, runResult.stderr || "(empty)")
+                    }
+                    type="button"
+                  >
+                    Export stderr
+                  </button>
+                </div>
+              ) : null}
             </div>
           )}
 
@@ -974,9 +1253,58 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
                         />
                         {participant.name}
                       </span>
-                      {participant.isYou ? <span className="text-[10px] text-zinc-500">you</span> : null}
+                      <span className="text-[10px] text-zinc-500">
+                        {participant.isYou ? "you" : ""}
+                        {participant.presence?.cursorContext === "editor" &&
+                        typeof participant.presence?.editorCursorLine === "number"
+                          ? ` ${participant.presence.editorCursorLine}:${participant.presence.editorCursorColumn ?? 1}`
+                          : ""}
+                        {participant.presence?.cursorContext === "whiteboard" ? " drawing" : ""}
+                      </span>
                     </div>
                   ))}
+                </div>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-black/25 p-2.5">
+                <p className="text-zinc-400">Replay</p>
+                <button
+                  className="mt-2 w-full rounded-lg border border-white/20 px-2 py-1.5 text-xs text-zinc-100 hover:border-white/40"
+                  onClick={createReplayLink}
+                  type="button"
+                >
+                  Generate read-only replay link
+                </button>
+                {replayUrl ? <p className="mt-2 break-all text-[10px] text-zinc-400">{replayUrl}</p> : null}
+              </div>
+              <div className="rounded-xl border border-white/10 bg-black/25 p-2.5">
+                <p className="text-zinc-400">Voice Notes</p>
+                <button
+                  className="mt-2 w-full rounded-lg border border-white/20 px-2 py-1.5 text-xs text-zinc-100 hover:border-white/40"
+                  onClick={toggleVoiceRecording}
+                  type="button"
+                >
+                  {isRecordingVoice ? "Stop recording" : "Record quick clip"}
+                </button>
+                <div className="mt-2 space-y-1">
+                  {voiceClips.slice(0, 3).map((clip) => (
+                    <div className="rounded border border-white/10 px-2 py-1" key={clip.id}>
+                      <p className="text-[10px] text-zinc-500">{Math.round(clip.durationMs / 1000)}s</p>
+                      <audio className="mt-1 w-full" controls src={clip.url} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-black/25 p-2.5">
+                <p className="text-zinc-400">Recent Events</p>
+                <div className="mt-2 max-h-24 space-y-1 overflow-y-auto">
+                  {[...sessionEvents]
+                    .slice(-6)
+                    .reverse()
+                    .map((event) => (
+                      <p className="text-[10px] text-zinc-300" key={event.id}>
+                        [{new Date(event.createdAt).toLocaleTimeString()}] {event.actor}: {event.text}
+                      </p>
+                    ))}
                 </div>
               </div>
               <button
@@ -1050,10 +1378,19 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
                   className="rounded-xl border border-white bg-white px-3 py-2 text-xs font-semibold text-black disabled:opacity-50"
                   disabled={!canAddTask}
                   onClick={() => {
+                    const mention = taskInput.match(/@([a-zA-Z0-9_-]+)/);
+                    const mentionAssignee = mention?.[1] ?? "";
                     addTask({
-                      title: taskInput.trim(),
-                      assignee: assigneeInput.trim(),
+                      title: taskInput.trim().replace(/\s*@([a-zA-Z0-9_-]+)/g, "").trim(),
+                      assignee: assigneeInput.trim() || mentionAssignee,
                       createdBy: me?.info?.name ?? "Unknown"
+                    });
+                    appendSessionEvent({
+                      id: crypto.randomUUID(),
+                      type: "task",
+                      actor: me?.info?.name ?? "Unknown",
+                      text: `Added task: ${taskInput.slice(0, 80)}`,
+                      createdAt: Date.now()
                     });
                     setTaskInput("");
                     setAssigneeInput("");
@@ -1073,7 +1410,16 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
                         <p className="text-xs font-semibold text-zinc-100">{task.title}</p>
                         <button
                           className="rounded border border-white/15 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:border-white/40"
-                          onClick={() => deleteTask(task.id)}
+                          onClick={() => {
+                            deleteTask(task.id);
+                            appendSessionEvent({
+                              id: crypto.randomUUID(),
+                              type: "task",
+                              actor: me?.info?.name ?? "Unknown",
+                              text: `Deleted task: ${task.title.slice(0, 60)}`,
+                              createdAt: Date.now()
+                            });
+                          }}
                           type="button"
                         >
                           Delete
@@ -1084,7 +1430,16 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
                       </p>
                       <button
                         className="rounded border border-white/15 px-2 py-1 text-[10px] text-zinc-200 hover:border-white/40"
-                        onClick={() => cycleTaskStatus(task.id)}
+                        onClick={() => {
+                          cycleTaskStatus(task.id);
+                          appendSessionEvent({
+                            id: crypto.randomUUID(),
+                            type: "task",
+                            actor: me?.info?.name ?? "Unknown",
+                            text: `Updated task status: ${task.title.slice(0, 60)}`,
+                            createdAt: Date.now()
+                          });
+                        }}
                         type="button"
                       >
                         Change status
@@ -1120,6 +1475,24 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
                   Export summary
                 </button>
               </div>
+              <div className="mt-2 rounded-xl border border-white/10 bg-black/25 p-2.5">
+                <p className="mb-2 text-xs text-zinc-400">GitHub Gist Export</p>
+                <input
+                  className="w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1.5 text-[11px] text-zinc-100 outline-none focus:border-white/40"
+                  onChange={(event) => setGistToken(event.target.value)}
+                  placeholder="GitHub token (gist scope)"
+                  type="password"
+                  value={gistToken}
+                />
+                <button
+                  className="mt-2 w-full rounded-lg border border-white/20 px-2 py-1.5 text-[11px] text-zinc-100 hover:border-white/40"
+                  onClick={exportCurrentCodeToGist}
+                  type="button"
+                >
+                  Export current code to Gist
+                </button>
+                {gistStatus ? <p className="mt-2 text-[10px] text-zinc-400">{gistStatus}</p> : null}
+              </div>
             </div>
           )}
 
@@ -1127,6 +1500,16 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
             <div className="flex h-[calc(100%-2.5rem)] flex-col">
               <div className="mb-2 rounded-xl border border-white/10 bg-black/25 px-2.5 py-2 text-xs text-zinc-400">
                 Shared run history for this room.
+              </div>
+              <div className="mb-2 max-h-24 space-y-1 overflow-y-auto rounded-xl border border-white/10 bg-black/25 p-2.5">
+                {[...sessionEvents]
+                  .slice(-8)
+                  .reverse()
+                  .map((event) => (
+                    <p className="text-[10px] text-zinc-300" key={event.id}>
+                      [{new Date(event.createdAt).toLocaleTimeString()}] {event.type} · {event.actor}: {event.text}
+                    </p>
+                  ))}
               </div>
               <div className="flex-1 space-y-2 overflow-y-auto rounded-xl border border-white/10 bg-black/25 p-2.5">
                 {runHistory.length === 0 ? (
@@ -1143,6 +1526,22 @@ export default function WorkspaceShell({ roomId, roomName }: WorkspaceShellProps
                           {new Date(entry.createdAt).toLocaleTimeString()} by {entry.ranBy}
                         </p>
                         <p className="mt-1 text-[11px] text-zinc-300">{entry.preview}</p>
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            className="rounded border border-white/15 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:border-white/40"
+                            onClick={() => downloadTextFile(`run-${entry.id}-stdout.txt`, entry.stdout || "(empty)")}
+                            type="button"
+                          >
+                            stdout
+                          </button>
+                          <button
+                            className="rounded border border-white/15 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:border-white/40"
+                            onClick={() => downloadTextFile(`run-${entry.id}-stderr.txt`, entry.stderr || "(empty)")}
+                            type="button"
+                          >
+                            stderr
+                          </button>
+                        </div>
                       </div>
                     ))
                 )}

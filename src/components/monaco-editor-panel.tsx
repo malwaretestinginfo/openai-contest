@@ -35,6 +35,8 @@ type CompletionKindName =
 
 type MonacoEditorPanelProps = {
   language?: string;
+  onCursorChange?: (payload: { lineNumber: number; column: number }) => void;
+  onEditorBlur?: () => void;
   onReady?: (api: {
     getText: () => string;
     setText: (text: string) => void;
@@ -124,7 +126,7 @@ function defineDarkTheme(monaco: Monaco) {
   isThemeDefined = true;
 }
 
-export default function MonacoEditorPanel({ onReady, language = "lua" }: MonacoEditorPanelProps) {
+export default function MonacoEditorPanel({ onReady, language = "lua", onCursorChange, onEditorBlur }: MonacoEditorPanelProps) {
   const room = useRoom();
   const editorRef = useRef<MonacoEditorType.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
@@ -223,8 +225,17 @@ export default function MonacoEditorPanel({ onReady, language = "lua" }: MonacoE
     editorRef.current = editor;
     monacoRef.current = monaco;
     editor.getModel()?.updateOptions({ insertSpaces: false });
+    editor.onDidChangeCursorPosition((event) => {
+      onCursorChange?.({
+        lineNumber: event.position.lineNumber,
+        column: event.position.column
+      });
+    });
+    editor.onDidBlurEditorText(() => {
+      onEditorBlur?.();
+    });
     setEditorReady(true);
-  }, []);
+  }, [onCursorChange, onEditorBlur]);
 
   const addRawSnippet = useCallback((data: LuaSuggestion) => {
     proposals.push(data);

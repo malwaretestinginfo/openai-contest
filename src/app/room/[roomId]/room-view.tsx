@@ -226,13 +226,17 @@ export default function RoomView({ roomId }: RoomViewProps) {
         id={roomId}
         initialPresence={{
           cursor: null,
+          cursorContext: null,
+          editorCursorLine: null,
+          editorCursorColumn: null,
           selectedTool: "pen"
         }}
         initialStorage={{
           strokes: [],
           tasks: [],
           sessionNote: "",
-          runHistory: []
+          runHistory: [],
+          sessionEvents: []
         }}
       >
         <ClientSideSuspense

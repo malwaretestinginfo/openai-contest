@@ -13,7 +13,7 @@ function normalizeModel(model: string) {
 const MODEL = normalizeModel(process.env.AI_MODEL || "openai/gpt-oss-120b");
 const CHAT_COMPLETIONS_URL = process.env.AI_CHAT_COMPLETIONS_URL || DEFAULT_CHAT_COMPLETIONS_URL;
 
-const SYSTEM_PROMPT = `
+const BASE_SYSTEM_PROMPT = `
 You are a senior AI assistant for a pair-programming app.
 You are allowed to use tools directly, but only when truly necessary.
 
@@ -28,8 +28,7 @@ TOOL_CALL: {"tool":"editor.getText","args":{}}
 
 IMPORTANT:
 - Never output TOOL_CALL for normal conversation.
-- If the user asks for code to be written, inserted, generated, or replaced in the editor, you MUST call editor.setText.
-- If the user asks for a script/snippet (for example "write python script"), treat this as a code insertion request and use editor.setText.
+- If the user explicitly asks to place or replace code inside the editor, use editor.setText.
 - Never return raw code blocks instead of editor.setText in such cases.
 - For greetings or regular chat (for example "Hi", "Hello"), answer with plain text only.
 - No markdown for TOOL_CALL.
@@ -41,25 +40,6 @@ TOOL_CALL: {"tool":"editor.addIntellisense","args":{"label":"print","kind":"Func
 
 If no tool is needed, answer normally in clear, short sentences.
 `.trim();
-
-function looksLikeCodeRequest(text: string) {
-  const lower = text.toLowerCase();
-  return /(write|generate|create|insert|add|build).*(code|script|snippet)|\bpython\b|\bjavascript\b|\btypescript\b|\bc\+\+\b|\bjava\b/.test(
-    lower
-  );
-}
-
-function hasToolCall(text: string) {
-  return /TOOL_CALL:\s*\{[\s\S]*\}/m.test(text);
-}
-
-function extractCode(text: string) {
-  const fenced = text.match(/```[a-zA-Z0-9_-]*\n([\s\S]*?)```/);
-  if (fenced?.[1]) {
-    return fenced[1].trim();
-  }
-  return text.trim();
-}
 
 function toSse(text: string) {
   const chunk = JSON.stringify({
@@ -82,10 +62,12 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json();
   const messages = Array.isArray(body?.messages) ? body.messages : [];
-  const lastUserMessage =
-    [...messages].reverse().find((message) => message?.role === "user" && typeof message?.content === "string")
-      ?.content ?? "";
-  const forceCodeToolCall = looksLikeCodeRequest(lastUserMessage);
+  const mode = body?.mode === "pair" ? "pair" : "chat";
+  const modePrompt =
+    mode === "pair"
+      ? "Pair mode is enabled. You may call tools if that produces a better pair-programming outcome."
+      : "Chat mode is enabled. Avoid tool calls unless the user explicitly requests an editor/tool action.";
+  const systemPrompt = `${BASE_SYSTEM_PROMPT}\n\n${modePrompt}`;
 
   const providerResponse = await fetch(CHAT_COMPLETIONS_URL, {
     method: "POST",
@@ -97,7 +79,7 @@ export async function POST(request: NextRequest) {
       model: MODEL,
       stream: false,
       temperature: 0.2,
-      messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages]
+      messages: [{ role: "system", content: systemPrompt }, ...messages]
     })
   });
 
@@ -112,16 +94,7 @@ export async function POST(request: NextRequest) {
   const providerJson = (await providerResponse.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
   };
-  const rawContent = providerJson.choices?.[0]?.message?.content ?? "";
-  let finalContent = rawContent;
-
-  if (forceCodeToolCall && !hasToolCall(rawContent)) {
-    const code = extractCode(rawContent);
-    finalContent = `TOOL_CALL: ${JSON.stringify({
-      tool: "editor.setText",
-      args: { text: code }
-    })}`;
-  }
+  const finalContent = providerJson.choices?.[0]?.message?.content ?? "";
 
   return new NextResponse(toSse(finalContent), {
     headers: {

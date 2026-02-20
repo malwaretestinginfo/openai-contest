@@ -1,6 +1,9 @@
 export type Presence = {
   cursor: { x: number; y: number } | null;
-  selectedTool: "pen" | "eraser";
+  cursorContext: "whiteboard" | "editor" | null;
+  editorCursorLine: number | null;
+  editorCursorColumn: number | null;
+  selectedTool: "pen" | "eraser" | "line" | "rect" | "ellipse" | "pan";
 };
 
 export type WhiteboardPoint = {
@@ -35,6 +38,17 @@ export type RunHistoryEntry = {
   exitCode: number;
   createdAt: number;
   preview: string;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+};
+
+export type SessionEvent = {
+  id: string;
+  type: "join" | "chat" | "run" | "task" | "whiteboard" | "ai";
+  actor: string;
+  text: string;
+  createdAt: number;
 };
 
 export type Storage = {
@@ -42,6 +56,7 @@ export type Storage = {
   tasks: TaskItem[];
   sessionNote: string;
   runHistory: RunHistoryEntry[];
+  sessionEvents: SessionEvent[];
 };
 
 export type UserMeta = {

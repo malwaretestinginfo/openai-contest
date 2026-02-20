@@ -52,8 +52,25 @@ export default function AiAssistantPanel({ runTool }: AiAssistantPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [pairMode, setPairMode] = useState(true);
 
   const canSend = useMemo(() => input.trim().length > 0 && !isSending, [input, isSending]);
+
+  function shouldExecuteToolCall(userText: string, toolCall: ToolCall) {
+    const text = userText.toLowerCase();
+    const greetingOnly =
+      /^(hi|hello|hey|hallo|servus|moin|yo|guten tag|good morning|good evening)[!. ]*$/i.test(userText.trim());
+
+    if (greetingOnly) {
+      return false;
+    }
+
+    if (toolCall.tool === "editor.setText") {
+      return /(write|generate|create|insert|replace|set|update|build|fix|script|code)/.test(text);
+    }
+
+    return true;
+  }
 
   async function sendMessage(event: FormEvent) {
     event.preventDefault();
@@ -75,7 +92,8 @@ export default function AiAssistantPanel({ runTool }: AiAssistantPanelProps) {
           ...getSecurityHeaders()
         },
         body: JSON.stringify({
-          messages: nextMessages
+          messages: nextMessages,
+          mode: pairMode ? "pair" : "chat"
         })
       });
 
@@ -138,6 +156,17 @@ export default function AiAssistantPanel({ runTool }: AiAssistantPanelProps) {
         return;
       }
 
+      if (!shouldExecuteToolCall(userMessage.content, parsedResponse.toolCall)) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: parsedResponse.visibleText || "I understood your message. No tool call needed."
+          }
+        ]);
+        return;
+      }
+
       const result = await runTool(parsedResponse.toolCall.tool, parsedResponse.toolCall.args);
       const responseText = parsedResponse.visibleText
         ? `${parsedResponse.visibleText}\n\nTool executed: ${parsedResponse.toolCall.tool}\n${result}`
@@ -162,6 +191,15 @@ export default function AiAssistantPanel({ runTool }: AiAssistantPanelProps) {
     <div className="flex h-full flex-col rounded-2xl border border-white/10 bg-[#0a0918]/75 backdrop-blur-2xl">
       <div className="border-b border-white/10 px-4 py-3 text-sm font-semibold text-[#f1ecff]">
         AI Assistant (gpt-oss-120b)
+        <label className="ml-3 inline-flex items-center gap-2 text-[11px] font-normal text-[#b6addb]">
+          <input
+            checked={pairMode}
+            className="accent-[#8f6bff]"
+            onChange={(event) => setPairMode(event.target.checked)}
+            type="checkbox"
+          />
+          Pair Mode
+        </label>
       </div>
       <div className="flex-1 space-y-2 overflow-y-auto p-3 text-sm">
         {messages.length === 0 ? (

@@ -1,11 +1,12 @@
 "use client";
 
 import { PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useStorage } from "@liveblocks/react/suspense";
+import { useMutation, useMyPresence, useOthers, useStorage } from "@liveblocks/react/suspense";
 import type { WhiteboardElementType, WhiteboardPoint, WhiteboardStroke } from "@/liveblocks.config";
 
 type WhiteboardCanvasProps = {
   className?: string;
+  onStrokeCommitted?: () => void;
 };
 
 type ToolMode = WhiteboardElementType | "eraser" | "pan";
@@ -57,9 +58,11 @@ function drawElement(ctx: CanvasRenderingContext2D, element: WhiteboardStroke) {
   ctx.stroke();
 }
 
-export default function WhiteboardCanvas({ className }: WhiteboardCanvasProps) {
+export default function WhiteboardCanvas({ className, onStrokeCommitted }: WhiteboardCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const [{}, setMyPresence] = useMyPresence();
+  const others = useOthers();
 
   const [tool, setTool] = useState<ToolMode>("freehand");
   const [color, setColor] = useState("#ffffff");
@@ -201,7 +204,16 @@ export default function WhiteboardCanvas({ className }: WhiteboardCanvasProps) {
     });
     setRedoStack([]);
     setDraftPoints([]);
-  }, [currentColor, currentShape, currentWidth, draftPoints, pushStroke]);
+    onStrokeCommitted?.();
+  }, [currentColor, currentShape, currentWidth, draftPoints, onStrokeCommitted, pushStroke]);
+
+  useEffect(() => {
+    const mappedTool =
+      tool === "freehand" ? "pen" : tool === "eraser" ? "eraser" : tool === "line" ? "line" : tool === "rect" ? "rect" : tool === "ellipse" ? "ellipse" : "pan";
+    setMyPresence({
+      selectedTool: mappedTool
+    });
+  }, [setMyPresence, tool]);
 
   return (
     <div className={className}>
@@ -310,6 +322,12 @@ export default function WhiteboardCanvas({ className }: WhiteboardCanvasProps) {
           className="absolute inset-0 h-full w-full touch-none"
           onPointerDown={(event) => {
             event.currentTarget.setPointerCapture(event.pointerId);
+            setMyPresence({
+              cursorContext: "whiteboard",
+              cursor: { x: event.clientX, y: event.clientY },
+              editorCursorLine: null,
+              editorCursorColumn: null
+            });
             if (tool === "pan" || event.button === 1) {
               setIsPanning(true);
               setPanStart({ x: event.clientX - pan.x, y: event.clientY - pan.y });
@@ -320,6 +338,10 @@ export default function WhiteboardCanvas({ className }: WhiteboardCanvasProps) {
             setDraftPoints([point]);
           }}
           onPointerMove={(event) => {
+            setMyPresence({
+              cursorContext: "whiteboard",
+              cursor: { x: event.clientX, y: event.clientY }
+            });
             if (isPanning && panStart) {
               setPan({ x: event.clientX - panStart.x, y: event.clientY - panStart.y });
               return;
@@ -336,6 +358,9 @@ export default function WhiteboardCanvas({ className }: WhiteboardCanvasProps) {
             });
           }}
           onPointerUp={() => {
+            setMyPresence({
+              cursorContext: "whiteboard"
+            });
             if (isPanning) {
               setIsPanning(false);
               setPanStart(null);
@@ -351,8 +376,35 @@ export default function WhiteboardCanvas({ className }: WhiteboardCanvasProps) {
             const step = event.deltaY < 0 ? 1.08 : 0.92;
             setZoom((prev) => Math.max(0.3, Math.min(3, prev * step)));
           }}
+          onPointerLeave={() => {
+            setMyPresence({
+              cursorContext: null,
+              cursor: null
+            });
+          }}
           ref={canvasRef}
         />
+        {others.map((other) => {
+          if (other.presence.cursorContext !== "whiteboard" || !other.presence.cursor) {
+            return null;
+          }
+          const color = other.info?.color ?? "#ffffff";
+          return (
+            <div
+              className="pointer-events-none absolute left-0 top-0 z-20"
+              key={other.connectionId}
+              style={{ transform: `translate(${other.presence.cursor.x}px, ${other.presence.cursor.y}px)` }}
+            >
+              <div
+                className="h-2.5 w-2.5 rounded-full border border-black/30"
+                style={{ backgroundColor: color }}
+              />
+              <div className="mt-1 rounded-md border border-white/15 bg-black/70 px-1.5 py-0.5 text-[10px] text-white">
+                {other.info?.name ?? `User ${other.connectionId}`}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
