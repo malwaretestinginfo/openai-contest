@@ -38,7 +38,7 @@ All final architecture, product direction, and feature priorities were guided th
 ### 1) Install dependencies
 
 ```bash
-pnpm install
+npm install
 ```
 
 ### 2) Configure environment
@@ -54,7 +54,7 @@ Important: never commit real keys.
 ### 3) Start development server
 
 ```bash
-pnpm dev
+npm run dev
 ```
 
 Then open:
