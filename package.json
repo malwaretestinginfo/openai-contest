@@ -16,6 +16,7 @@
     "@liveblocks/yjs": "*",
     "@monaco-editor/react": "*",
     "@types/pg": "^8.16.0",
+    "@vercel/analytics": "^1.6.1",
     "monaco-editor": "*",
     "next": "16.1.6",
     "pg": "^8.18.0",
