@@ -1,5 +1,7 @@
 # Pair Studio (OpenAI Contest)
 
+Public repo: https://github.com/malwaretestinginfo/openai-contest
+
 Realtime pair-programming workspace built with Next.js, Liveblocks, Monaco, Canvas whiteboard, and Groq AI.
 
 ## What I built
@@ -48,6 +50,7 @@ Create `.env.local` from `.env.example` and set values:
 - `LIVEBLOCKS_SECRET_KEY`
 - `LIVEBLOCKS_PUBLIC_KEY` (if used by your setup)
 - `GROQ_API_KEY`
+- `DATABASE_URL` (PostgreSQL / Neon)
 
 Important: never commit real keys.
 
