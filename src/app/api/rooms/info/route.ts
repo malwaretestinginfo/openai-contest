@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
   }
 
   const roomId = request.nextUrl.searchParams.get("roomId") ?? "";
-  const summary = getRoomSummary(roomId);
+  const summary = await getRoomSummary(roomId);
   if (!summary) {
     const normalizedRoomId = normalizeRoomId(roomId);
     if (!normalizedRoomId) {

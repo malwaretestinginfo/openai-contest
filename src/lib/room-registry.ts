@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { getDb } from "@/lib/db";
 
 export type RoomSummary = {
   roomId: string;
@@ -23,7 +24,6 @@ type AccessTicket = {
   expiresAt: number;
 };
 
-const rooms = new Map<string, RoomRecord>();
 const TICKET_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const TICKET_VERSION = 1;
 
@@ -137,7 +137,29 @@ export function normalizeRoomId(input: string) {
     .slice(0, 64);
 }
 
-export function createRoom(params: { roomId: string; roomName: string; password?: string }) {
+async function getRoomById(roomId: string): Promise<RoomRecord | null> {
+  const db = await getDb();
+  const result = await db.query<{
+    room_id: string;
+    room_name: string;
+    password_hash: string | null;
+    created_at: string | number;
+  }>("SELECT room_id, room_name, password_hash, created_at FROM rooms WHERE room_id = $1", [roomId]);
+
+  if (result.rowCount === 0) {
+    return null;
+  }
+
+  const row = result.rows[0];
+  return {
+    roomId: row.room_id,
+    roomName: row.room_name,
+    passwordHash: row.password_hash ?? undefined,
+    createdAt: Number(row.created_at)
+  };
+}
+
+export async function createRoom(params: { roomId: string; roomName: string; password?: string }) {
   const roomId = normalizeRoomId(params.roomId);
   const roomName = params.roomName.trim().slice(0, 80);
 
@@ -149,24 +171,29 @@ export function createRoom(params: { roomId: string; roomName: string; password?
     return { ok: false as const, error: "Room name is required." };
   }
 
-  if (rooms.has(roomId)) {
-    return { ok: false as const, error: "Room already exists." };
-  }
-
   const password = params.password?.trim() ?? "";
-  rooms.set(roomId, {
-    roomId,
-    roomName,
-    passwordHash: password ? hashPassword(password) : undefined,
-    createdAt: Date.now()
-  });
+  const passwordHash = password ? hashPassword(password) : undefined;
+  const createdAt = Date.now();
+  const db = await getDb();
+
+  try {
+    await db.query(
+      "INSERT INTO rooms (room_id, room_name, password_hash, created_at) VALUES ($1, $2, $3, $4)",
+      [roomId, roomName, passwordHash ?? null, createdAt]
+    );
+  } catch (error) {
+    if ((error as { code?: string }).code === "23505") {
+      return { ok: false as const, error: "Room already exists." };
+    }
+    throw error;
+  }
 
   return { ok: true as const, roomId };
 }
 
-export function getRoomSummary(roomIdInput: string): RoomSummary | null {
+export async function getRoomSummary(roomIdInput: string): Promise<RoomSummary | null> {
   const roomId = normalizeRoomId(roomIdInput);
-  const room = rooms.get(roomId);
+  const room = await getRoomById(roomId);
   if (!room) {
     return null;
   }
@@ -179,9 +206,9 @@ export function getRoomSummary(roomIdInput: string): RoomSummary | null {
   };
 }
 
-export function joinRoom(params: { roomId: string; displayName: string; password?: string }) {
+export async function joinRoom(params: { roomId: string; displayName: string; password?: string }) {
   const roomId = normalizeRoomId(params.roomId);
-  const room = rooms.get(roomId);
+  const room = await getRoomById(roomId);
 
   if (!room) {
     return { ok: false as const, error: "Room not found." };

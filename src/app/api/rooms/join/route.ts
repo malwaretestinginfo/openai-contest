@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
   const displayName = typeof body?.displayName === "string" ? body.displayName : "";
   const password = typeof body?.password === "string" ? body.password : "";
 
-  const joined = joinRoom({ roomId, displayName, password });
+  const joined = await joinRoom({ roomId, displayName, password });
   if (!joined.ok) {
     return NextResponse.json({ error: joined.error }, { status: 400 });
   }
@@ -35,4 +35,3 @@ export async function POST(request: NextRequest) {
 
   return response;
 }
-

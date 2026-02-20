@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
   const requestedRoomId = typeof body?.roomId === "string" ? body.roomId : "";
   const roomId = requestedRoomId ? normalizeRoomId(requestedRoomId) : generateRoomIdFromName(roomName);
 
-  const created = createRoom({
+  const created = await createRoom({
     roomId,
     roomName,
     password: roomPassword
@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: created.error }, { status: 400 });
   }
 
-  const joined = joinRoom({
+  const joined = await joinRoom({
     roomId: created.roomId,
     displayName,
     password: roomPassword
@@ -58,4 +58,3 @@ export async function POST(request: NextRequest) {
 
   return response;
 }
-
